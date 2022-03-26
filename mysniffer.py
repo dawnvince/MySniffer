@@ -72,6 +72,15 @@ class MySniffer():
     def __init__(self):
         self.run_state = State.STOP
         self.pkt_id = 1
+        self.pkt_list = []
+        self.trace_flag = False
+        self.trace_info = {
+            src:"",
+            dst:"",
+            sport:-1,
+            dport:-1
+        }
+
         tmp_file = self.create_tmp_file()
         self.tmp_file = tmp_file.name
         tmp_file.close()
@@ -263,7 +272,12 @@ class MySniffer():
                 result.append(tmp_result)
                 self.parse_http(pkt, result)
                 return
-        
+            elif src_port == 443 or dst_port == 443:
+                tmp_result.append(ttmp)
+                result.append(tmp_result)
+                result.append(["Hyper Text Transfer Protocol over SecureSocket Layer",\
+                    ["Can't Resolve"]])
+
         # UDP
         elif protocol == "UDP":
             src_port = pkt[cls_].sport
@@ -293,10 +307,14 @@ class MySniffer():
         ttmp = []
         if pkt.haslayer(HTTPRequest):
             tmp_result.append("Hyper Text Transfer Protocol (Request)")
-            ttmp.append("%s" % str(pkt[HTTPRequest].fields))
+            for k,v in pkt[HTTPRequest].fields.items():
+                ttmp.append("%s : %s\n" %(str(k), str(v)))
+
         elif pkt.haslayer(HTTPResponse):
             tmp_result.append("Hyper Text Transfer Protocol (Response)")
-            ttmp.append("%s" % str(pkt[HTTPResponse].fields))
+            for k,v in pkt[HTTPRequest].fields.items():
+                ttmp.append("%s : %s\n" %(str(k), str(v)))
+
         else:
             return
         tmp_result.append(ttmp)
@@ -322,16 +340,34 @@ class MySniffer():
         return result
 
 
+
     def add_pkt_to_qt(self, pkt_id, pkt_time, src, dst, protocol, \
-                        pkt_len, pkt_info):
-        pass
+                        pkt_len, pkt_info, sport, dport):
+        if self.trace_flag == True:
+            if self.trace_info[src] == src and \
+                self.trace_info[dst] == dst and \
+                self.trace_info[sport] == sport and \
+                self.trace_info[dport] == dport:
+                pass
+            elif self.trace_info[src] == dst and \
+                self.trace_info[dst] == src and \
+                self.trace_info[sport] == dport and \
+                self.trace_info[dport] == sport:
+                pass
+            else:
+                return
+        # qt界面
 
 
-    def parse_packet(self, pkt, writer):
+    def parse_packet(self, pkt, writer=None, file_flag=0):
         try:
             if pkt.name == "Ethernet" and self.run_state == State.RUN:
-
-                pkt_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
+                sport = -1
+                dport = -1
+                if file_flag == 0:
+                    pkt_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
+                else:
+                    pkt_time = "Unknown time (Get from file)"
 
                 protocol = pkt.payload.name
                 pkt_info = ""
@@ -375,6 +411,8 @@ class MySniffer():
                         protocol = "ICMP"
                         pkt_info = pkt[ICMP].summary()
                     elif protocol == "UDP":
+                        sport = packet[UDP].sport
+                        dport = packet[UDP].dport
                         pkt_info = pkt[UDP].summary()
                     elif protocol == "TCP":
                         sport = pkt[TCP].sport
@@ -395,11 +433,13 @@ class MySniffer():
                     if v6_flag:
                         protocol = protocol + "v6"
 
-                if writer:
+                if  :
                     writer.write(pkt)
 
+                self.pkt_list.append([self.pkt_id, pkt_time, src, dst, protocol, \
+                        len(pkt), pkt_info, sport, dport])
                 self.add_pkt_to_qt(self.pkt_id, pkt_time, src, dst, protocol, \
-                        len(pkt), pkt_info);
+                        len(pkt), pkt_info, sport, dport);
 
                 self.pkt_id += 1
 
@@ -459,9 +499,39 @@ class MySniffer():
         self.run_state = State.STOP
 
 
+    #[self.pkt_id, pkt_time, src, dst, protocol, len(pkt), pkt_info, sport, dport]
+    #     0           1       2    3       4        5         6        7      8
+    # 恢复时间暂停以防包序混乱
+
+    def push_trace(self, index):
+        ori_state = self.run_state
+        self.run_state = State.PAUSE
+        self.trace_flag = True
+        self.trace_info[src] == self.pkt_list[index][2]
+        self.trace_info[dst] == self.pkt_list[index][3]
+        self.trace_info[sport] == self.pkt_list[index][7]
+        self.trace_info[dport] == self.pkt_list[index][8]
+        # 清除列表
+        for i in self.pkt_list:
+            self.add_pkt_to_qt(i[0], i[1], i[2], i[3], i[4], i[5], i[6], i[7], i[8])
+
+        self.run_state = ori_state
+
+
+    def cancel_trace(self):
+        ori_state = self.run_state
+        self.run_state = State.PAUSE
+        self.trace_flag = False
+
+        for i in self.pkt_list:
+            self.add_pkt_to_qt(i[0], i[1], i[2], i[3], i[4], i[5], i[6], i[7], i[8])
+
+        self.run_state = ori_state
+
+
 def test():
     s = MySniffer()
-    s.push_start()
+    s.push_start(filters="port 80")
     i = 1
     while(1):
         time.sleep(1)
