@@ -5,6 +5,11 @@ from scapy.layers.http import *
 from scapy.sendrecv import sniff
 from scapy.utils import *
 
+from PyQt5.QtWidgets import QFileDialog, QMessageBox, QTreeWidgetItem
+from PyQt5.QtGui import QColor, QBrush
+from PyQt5.QtCore import pyqtSignal,QObject
+from PyQt5.Qt import Qt
+
 from threading import Event, Thread
 from tempfile import NamedTemporaryFile
 from datetime import datetime
@@ -44,6 +49,17 @@ icmp_types = {
     10: "Route solicitation"
 }
 
+bg_color = {
+    "ARP":"#30c9e8",
+    "IP":"#f66071",
+    "ICMP":"#fbc900",
+    "TCP":"#30c9e8",
+    "UDP":"#8dc3e0",
+    "HTTP":"#0251ff",
+    "HTTPS":"#faf5e6",
+    "DNS":"#ffccff"
+}
+
 event = Event()
 
 def get_netcard(self):
@@ -61,7 +77,9 @@ def get_netcard(self):
     return list(netcard_info.values())
 
 
-class MySniffer():
+class MySniffer(QObject):
+    # QT signals
+    add_pkt = pyqtSignal(int, str, str, str, str, int, str)
     '''
     @params:
     run_state: 
@@ -69,17 +87,22 @@ class MySniffer():
         2 denotes running
         3 denotes pause
     '''
-    def __init__(self):
+    def __init__(self, window=None):
+        super().__init__()
+        self.window = window
         self.run_state = State.STOP
         self.pkt_id = 1
         self.pkt_list = []
         self.trace_flag = False
         self.trace_info = {
-            src:"",
-            dst:"",
-            sport:-1,
-            dport:-1
+            "src":"",
+            "dst":"",
+            "sport":-1,
+            "dport":-1
         }
+        
+        # bind signals
+        self.add_pkt.connect(self.window.add_pkt_to_tree)
 
         tmp_file = self.create_tmp_file()
         self.tmp_file = tmp_file.name
@@ -243,7 +266,7 @@ class MySniffer():
             data =  pkt.payload
             if len(data) > 0:
                 ttmp.append("Data (%d bytes): %s" 
-                                %(len(data), hex(data)))
+                                %(len(data), pkt[cls_].load.hex()))
 
         # TCP
         elif protocol == "TCP":
@@ -356,7 +379,9 @@ class MySniffer():
                 pass
             else:
                 return
-        # qt界面
+        # send signals
+        self.add_pkt.emit(pkt_id, pkt_time, src, dst, protocol, \
+                        pkt_len, pkt_info)
 
 
     def parse_packet(self, pkt, writer=None, file_flag=0):
@@ -411,8 +436,8 @@ class MySniffer():
                         protocol = "ICMP"
                         pkt_info = pkt[ICMP].summary()
                     elif protocol == "UDP":
-                        sport = packet[UDP].sport
-                        dport = packet[UDP].dport
+                        sport = pkt[UDP].sport
+                        dport = pkt[UDP].dport
                         pkt_info = pkt[UDP].summary()
                     elif protocol == "TCP":
                         sport = pkt[TCP].sport
@@ -433,8 +458,7 @@ class MySniffer():
                     if v6_flag:
                         protocol = protocol + "v6"
 
-                if  :
-                    writer.write(pkt)
+                writer.write(pkt)
 
                 self.pkt_list.append([self.pkt_id, pkt_time, src, dst, protocol, \
                         len(pkt), pkt_info, sport, dport])
@@ -444,7 +468,8 @@ class MySniffer():
                 self.pkt_id += 1
 
         except Exception as e:
-            print(e)
+            #print(e)
+            raise e
 
 
     def capture_packet(self, netcard=None, filters=None):
@@ -531,7 +556,7 @@ class MySniffer():
 
 def test():
     s = MySniffer()
-    s.push_start(filters="port 80")
+    s.push_start()
     i = 1
     while(1):
         time.sleep(1)
@@ -539,4 +564,4 @@ def test():
         i += 3
         if result:
             print(result)
-test()
+# test()
