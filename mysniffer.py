@@ -16,6 +16,7 @@ from datetime import datetime
 from psutil import net_if_addrs, net_io_counters
 
 import os
+import shutil
 import json
 
 from enum import Enum
@@ -24,7 +25,6 @@ class State(Enum):
     STOP = 1
     RUN = 2
     PAUSE = 3
-
 
 # 常用端口
 ports = {
@@ -91,6 +91,7 @@ class MySniffer(QObject):
         super().__init__()
         self.window = window
         self.run_state = State.STOP
+        self.save_flag = 1
         self.pkt_id = 1
         self.pkt_list = []
         self.trace_flag = False
@@ -114,10 +115,6 @@ class MySniffer(QObject):
             prefix=datetime.now().strftime('%Y%m%d-%H-%M-%S'), delete=False)
 
 
-    def save_tmp_file(self):
-        pass
-
-
     def del_tmp_file(self):
         os.remove(self.tmp_file)
 
@@ -137,7 +134,7 @@ class MySniffer(QObject):
             return pkts
 
         except:
-            print("No data could be read!")
+            print("Wrong File!")
             return None
 
 
@@ -360,22 +357,23 @@ class MySniffer(QObject):
         if pkt:
             self.parse_layer1(pkt, result)
 
-        return result
+        return result, hexdump(pkt, dump=True)
 
 
 
     def add_pkt_to_qt(self, pkt_id, pkt_time, src, dst, protocol, \
                         pkt_len, pkt_info, sport, dport):
+
         if self.trace_flag == True:
-            if self.trace_info[src] == src and \
-                self.trace_info[dst] == dst and \
-                self.trace_info[sport] == sport and \
-                self.trace_info[dport] == dport:
+            if self.trace_info["src"] == src and \
+                self.trace_info["dst"] == dst and \
+                self.trace_info["sport"] == sport and \
+                self.trace_info["dport"] == dport:
                 pass
-            elif self.trace_info[src] == dst and \
-                self.trace_info[dst] == src and \
-                self.trace_info[sport] == dport and \
-                self.trace_info[dport] == sport:
+            elif self.trace_info["src"] == dst and \
+                self.trace_info["dst"] == src and \
+                self.trace_info["sport"] == dport and \
+                self.trace_info["dport"] == sport:
                 pass
             else:
                 return
@@ -431,10 +429,11 @@ class MySniffer(QObject):
 
                     # Layer 3
                     protocol = pkt.payload.payload.name
+                    cls_ = pkt.__class__
 
                     if len(protocol) >= 4 and protocol[0:4] == "ICMP":
                         protocol = "ICMP"
-                        pkt_info = pkt[ICMP].summary()
+                        pkt_info = pkt[cls_].summary()
                     elif protocol == "UDP":
                         sport = pkt[UDP].sport
                         dport = pkt[UDP].dport
@@ -458,7 +457,8 @@ class MySniffer(QObject):
                     if v6_flag:
                         protocol = protocol + "v6"
 
-                writer.write(pkt)
+                    if writer:
+                        writer.write(pkt)
 
                 self.pkt_list.append([self.pkt_id, pkt_time, src, dst, protocol, \
                         len(pkt), pkt_info, sport, dport])
@@ -470,6 +470,22 @@ class MySniffer(QObject):
         except Exception as e:
             #print(e)
             raise e
+
+
+    def read_packet(self, filename, filters=None):
+        event.clear()
+        self.pkt_id = 1
+        self.pkt_list = []
+        self.trace_flag = False
+        self.run_state = State.RUN
+        shutil.copy(filename, self.tmp_file)
+
+        sniff(
+            prn=(lambda x: self.parse_packet(x, None)),
+            store=False,
+            offline=self.tmp_file,
+            filter=filters
+        )
 
 
     def capture_packet(self, netcard=None, filters=None):
@@ -486,17 +502,23 @@ class MySniffer(QObject):
 
         except scapy.error.Scapy_Exception as e:
             print("Please check BPF syntax")
+            raise e
+        except Exception as e:
+            raise e
 
 
     def push_start(self, netcard=None, filters=None):
-        if self.run_state == State.RUN:
-            return
-        elif self.run_state == State.PAUSE:
+
+        if self.run_state == State.PAUSE:
             self.run_state = State.RUN
+            self.save_flag = 0
             return
-        elif self.run_state == State.STOP:
+        elif self.run_state == State.STOP or self.run_state == State.RUN:
+            if self.save_flag == 0:
+                self.window.save_file()
+            self.save_flag = 0
             # 停止转开始，提示保存数据包（同wireshark）
-            if self.pkt_id != 0:
+            if self.pkt_id != 1:
                 # 输出提示框并保存
                 self.del_tmp_file()
                 # 重新创建tmp文件
@@ -505,12 +527,15 @@ class MySniffer(QObject):
                 tmp_file.close()
         
         event.clear()
+        self.pkt_id = 1
+        self.pkt_list = []
+        self.trace_flag = False
         self.run_state = State.RUN
 
         thread = Thread(
             target=self.capture_packet,
-            daemon=True,
-            args=(netcard, filters)
+            args=(netcard, filters),
+            daemon = True
             )
         thread.start()
 
@@ -528,14 +553,17 @@ class MySniffer(QObject):
     #     0           1       2    3       4        5         6        7      8
     # 恢复时间暂停以防包序混乱
 
-    def push_trace(self, index):
+    def push_trace(self, pkt_id):
         ori_state = self.run_state
         self.run_state = State.PAUSE
         self.trace_flag = True
-        self.trace_info[src] == self.pkt_list[index][2]
-        self.trace_info[dst] == self.pkt_list[index][3]
-        self.trace_info[sport] == self.pkt_list[index][7]
-        self.trace_info[dport] == self.pkt_list[index][8]
+        print("Start Tracing")
+        print(self.pkt_list[pkt_id-1])
+        self.trace_info["src"] = self.pkt_list[pkt_id-1][2]
+        self.trace_info["dst"] = self.pkt_list[pkt_id-1][3]
+        self.trace_info["sport"] = self.pkt_list[pkt_id-1][7]
+        self.trace_info["dport"] = self.pkt_list[pkt_id-1][8]
+        print(self.trace_info)
         # 清除列表
         for i in self.pkt_list:
             self.add_pkt_to_qt(i[0], i[1], i[2], i[3], i[4], i[5], i[6], i[7], i[8])
@@ -547,6 +575,12 @@ class MySniffer(QObject):
         ori_state = self.run_state
         self.run_state = State.PAUSE
         self.trace_flag = False
+        self.trace_info = {
+            "src":"",
+            "dst":"",
+            "sport":-1,
+            "dport":-1
+        }
 
         for i in self.pkt_list:
             self.add_pkt_to_qt(i[0], i[1], i[2], i[3], i[4], i[5], i[6], i[7], i[8])
