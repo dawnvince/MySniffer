@@ -129,7 +129,7 @@ class AppUi(QMainWindow):
         font.setPointSize(20)
 
         self.Filter = QLineEdit(self.Widget)
-        self.Filter.setPlaceholderText("请使用BPF规则语法，否则没有输出")
+        self.Filter.setPlaceholderText("输入应用层协议或BPF规则语法，否则无输出")
         self.Filter.setStyleSheet("background:white")
         self.Filter.setFont(font)
         self.headLayout.addWidget(self.Filter)

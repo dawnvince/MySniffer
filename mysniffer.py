@@ -39,6 +39,15 @@ ports = {
     3306: "MySql"
 }
 
+port_filter = {
+    "http" : 80,
+    "https":443,
+    "ftp"  :21,
+    "ssh"  :22,
+    "telnet":23,
+    "dns"   :53
+}
+
 # ICMP类型
 icmp_types = {
     0: "Echo Reply",
@@ -297,6 +306,7 @@ class MySniffer(QObject):
                 result.append(tmp_result)
                 result.append(["Hyper Text Transfer Protocol over SecureSocket Layer",\
                     ["Can't Resolve"]])
+                return
 
         # UDP
         elif protocol == "UDP":
@@ -328,12 +338,12 @@ class MySniffer(QObject):
         if pkt.haslayer(HTTPRequest):
             tmp_result.append("Hyper Text Transfer Protocol (Request)")
             for k,v in pkt[HTTPRequest].fields.items():
-                ttmp.append("%s : %s\n" %(str(k), str(v)))
+                ttmp.append("%s : %s" %(str(k), str(v)))
 
         elif pkt.haslayer(HTTPResponse):
             tmp_result.append("Hyper Text Transfer Protocol (Response)")
-            for k,v in pkt[HTTPRequest].fields.items():
-                ttmp.append("%s : %s\n" %(str(k), str(v)))
+            for k,v in pkt[HTTPResponse].fields.items():
+                ttmp.append("%s : %s" %(str(k), str(v)))
 
         else:
             return
@@ -382,7 +392,7 @@ class MySniffer(QObject):
                         pkt_len, pkt_info)
 
 
-    def parse_packet(self, pkt, writer=None, file_flag=0):
+    def parse_packet(self, pkt, writer=None, file_flag=0, prot=""):
         try:
             if pkt.name == "Ethernet" and self.run_state == State.RUN:
                 sport = -1
@@ -442,7 +452,13 @@ class MySniffer(QObject):
                         sport = pkt[TCP].sport
                         dport = pkt[TCP].dport
                         pkt_info = pkt[TCP].summary()
-                        if sport in ports:
+                        if sport == 80 or dport == 80:
+                            http_payload = pkt.payload.payload.payload
+                            if http_payload and len(str(http_payload)) > 4:
+                                method = str(http_payload)[2:5]
+                                if method == "GET" or method == "POS" or method == "HTT":
+                                    protocol = "HTTP"
+                        elif sport in ports:
                             protocol = ports[sport]
                         elif dport in ports:
                             protocol = ports[dport]
@@ -453,12 +469,17 @@ class MySniffer(QObject):
                         #     protocol = pkt_name
                         #     pkt_info = pkt[pkt_cls].summary()
                         #     print(pkt_info)
+                    if prot != "":
+                        print("prot is %s" %prot)
+                        if prot != protocol.lower():
+                            return
 
                     if v6_flag:
                         protocol = protocol + "v6"
 
-                    if writer:
-                        writer.write(pkt)
+
+                if writer:
+                    writer.write(pkt)
 
                 self.pkt_list.append([self.pkt_id, pkt_time, src, dst, protocol, \
                         len(pkt), pkt_info, sport, dport])
@@ -480,21 +501,38 @@ class MySniffer(QObject):
         self.run_state = State.RUN
         shutil.copy(filename, self.tmp_file)
 
+        prot = ""
+        tmp_filters = None
+        if filters:
+            tmp_filters = filters.lower()
+            if tmp_filters in port_filter:
+                prot = tmp_filters
+                tmp_filters = "port %d" %port_filter[tmp_filters]
+
+
         sniff(
-            prn=(lambda x: self.parse_packet(x, None)),
+            prn=(lambda x: self.parse_packet(x, None, prot=prot)),
             store=False,
             offline=self.tmp_file,
-            filter=filters
+            filter=tmp_filters
         )
 
 
     def capture_packet(self, netcard=None, filters=None):
+        prot = ""
+        tmp_filters = None
+        if filters:
+            tmp_filters = filters.lower()
+            if tmp_filters in port_filter:
+                prot = tmp_filters
+                tmp_filters = "port %d" %port_filter[tmp_filters]
+
         try:
             w = PcapWriter(self.tmp_file, append=True, sync=True)
             sniff(
                 iface=netcard,
-                prn=(lambda x: self.parse_packet(x, w)),
-                filter=filters,
+                prn=(lambda x: self.parse_packet(x, w, prot=prot)),
+                filter=tmp_filters,
                 stop_filter=(lambda x: event.is_set()),
                 store=False)
 
